@@ -6,21 +6,26 @@
 # invented. Authored in a separate private deployment-notes repo and copied
 # here; that repo holds the rationale, this file is the deployable artifact.
 #
-# Deploy as a REPOSITORY stack from the FORK, not from hermes-deploy: upstream
-# ships no published image, so `build: .` needs the source tree as build
-# context. A Web-editor stack has none and will fail.
+# Deploy as a REPOSITORY stack from the FORK. The image is PULLED, not built:
+# Portainer cannot build for a Git-repository stack. Its agent proxies the
+# Docker API over HTTP/1.1 while BuildKit needs an HTTP/2 gRPC session, so a
+# stack build dies with "failed to list workers: ... http2: frame too large".
+# Disabling BuildKit is no escape either -- the Dockerfile uses
+# `COPY --link --chmod=`, which the classic builder refuses. So CI builds the
+# image and pushes it to GHCR (.github/workflows/deploy-image.yml), and this
+# stack just runs it.
 #
 # Deltas from upstream:
 #   1. volume  ~/.hermes -> /opt/hermes   (Portainer runs as root; `~` won't resolve)
 #   2. UID/GID default 10000 -> 1001      (the dedicated `hermes` service
 #      account, NOT the admin user at uid 1000)
 #   3. network_mode: host kept            (reach llama-swap on the LAN without NAT)
-#   4. dashboard commented out for first run
+#   4. image pulled from GHCR instead of `build: .`
+#   5. dashboard commented out for first run
 #
 # Everything else is upstream verbatim. In particular:
-#   - `gateway` is the service that BUILDS and tags `image: hermes-agent`;
-#     `dashboard` reuses that image and has no build stanza of its own, hence
-#     depends_on. Bring the gateway up first or the dashboard has no image.
+#   - both services run the SAME image; upstream had `gateway` build it and
+#     `dashboard` reuse it, which is why dashboard still depends_on gateway.
 #   - Do NOT override entrypoint. `/init` is s6-overlay's PID 1 and runs the
 #     cont-init.d hooks (chown, profile reconcile, dashboard toggle) that set up
 #     the supervision tree. Bypassing it breaks the gateway.
@@ -31,8 +36,12 @@
 
 services:
   gateway:
-    build: .
-    image: hermes-agent
+    # Built and pushed by .github/workflows/deploy-image.yml. Because the tag is
+    # `:latest`, Portainer must be told to RE-PULL -- *Update the stack* ->
+    # "Re-pull image and redeploy". A plain redeploy reuses the cached image and
+    # you will not see your change. Pin a :sha- tag from the Actions run summary
+    # if you want reproducible deploys.
+    image: ${HERMES_IMAGE:-ghcr.io/tkontu/hermes-agent:latest}
     container_name: hermes
     restart: unless-stopped
     network_mode: host
@@ -63,7 +72,7 @@ services:
   #   ssh -L 9119:localhost:9119 <docker-host>
   #
   # dashboard:
-  #   image: hermes-agent          # built by `gateway`; no build stanza here
+  #   image: ${HERMES_IMAGE:-ghcr.io/tkontu/hermes-agent:latest}
   #   container_name: hermes-dashboard
   #   restart: unless-stopped
   #   network_mode: host

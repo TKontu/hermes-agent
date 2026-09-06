@@ -1,0 +1,100 @@
+name: deploy-image
+
+# Builds the Hermes Agent image and pushes it to GHCR so Portainer can PULL it.
+#
+# Why this exists: Portainer cannot build `build: .` for a Git-repository stack.
+# Its agent proxies the Docker API over HTTP/1.1, while BuildKit needs an HTTP/2
+# gRPC session, so a stack build fails with:
+#   "failed to list workers: ... http2: frame too large, note that the frame
+#    header looked like an HTTP/1.1 header"
+# Disabling BuildKit is not an escape hatch either: the Dockerfile uses
+# `COPY --link --chmod=`, which the classic builder rejects outright. So the
+# image has to be built somewhere else and pulled. Same pattern as
+# llama-swap-deploy.
+#
+# Side benefit: the deployment VM no longer needs build-time internet egress.
+# Its allowlist is the inference endpoint plus ghcr.io, permanently, instead of
+# a full-internet maintenance window for every rebuild.
+#
+# This is a DEPLOYMENT fork. Upstream's own workflows are disabled here --
+# docker.yml pushes to nousresearch/* with secrets this fork does not have.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker/**"
+      - ".github/workflows/deploy-image.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  # Resolves to <owner>/<repo>; metadata-action lowercases it for GHCR.
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The hosted runner ships ~14 GB free on /, and a multi-stage agent image
+      # plus its build cache can exceed that. Reclaiming the preinstalled
+      # toolchains is cheap insurance against a no-space failure 20 minutes in.
+      - name: Reclaim runner disk
+        run: |
+          echo "before: $(df -h / | awk 'NR==2{print $4}') free"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          echo "after:  $(df -h / | awk 'NR==2{print $4}') free"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image pushed"
+            echo ""
+            echo "Portainer pulls this; it does not build. To pick it up:"
+            echo "*Update the stack* -> **Re-pull image and redeploy** --"
+            echo "a plain redeploy reuses the cached \`:latest\`."
+            echo ""
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}" | tr ' ' '\n'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

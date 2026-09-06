@@ -1,0 +1,73 @@
+# Hermes Agent — Portainer deployment.
+#
+# Reconciled against the real upstream docker-compose.yml at
+# TKontu/hermes-agent @ 245e48008fa8 (level with NousResearch/hermes-agent main,
+# 2026-09-05). Service names, commands and image wiring are upstream's, not
+# invented. Authored in a separate private deployment-notes repo and copied
+# here; that repo holds the rationale, this file is the deployable artifact.
+#
+# Deploy as a REPOSITORY stack from the FORK, not from hermes-deploy: upstream
+# ships no published image, so `build: .` needs the source tree as build
+# context. A Web-editor stack has none and will fail.
+#
+# Deltas from upstream:
+#   1. volume  ~/.hermes -> /opt/hermes   (Portainer runs as root; `~` won't resolve)
+#   2. UID/GID default 10000 -> 1000      (match the host owner of /opt/hermes)
+#   3. network_mode: host kept            (reach llama-swap on the LAN without NAT)
+#   4. dashboard commented out for first run
+#
+# Everything else is upstream verbatim. In particular:
+#   - `gateway` is the service that BUILDS and tags `image: hermes-agent`;
+#     `dashboard` reuses that image and has no build stanza of its own, hence
+#     depends_on. Bring the gateway up first or the dashboard has no image.
+#   - Do NOT override entrypoint. `/init` is s6-overlay's PID 1 and runs the
+#     cont-init.d hooks (chown, profile reconcile, dashboard toggle) that set up
+#     the supervision tree. Bypassing it breaks the gateway.
+#   - There is deliberately no `env_file:` here. Hermes reads `.env` from its
+#     data dir (`/opt/data/.env`, i.e. `/opt/hermes/.env` on the host), so the
+#     bind mount already supplies it. A compose-level env_file pointing at a
+#     host path would additionally hard-fail the stack when the file is absent.
+
+services:
+  gateway:
+    build: .
+    image: hermes-agent
+    container_name: hermes
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      # Absolute host path — Portainer runs the stack as root, so `~` would not
+      # resolve to your user. All durable state lives here; the container is
+      # disposable.
+      - /opt/hermes:/opt/data
+    environment:
+      # Must match the uid:gid owning /opt/hermes, or the container writes files
+      # the host user cannot read back. Upstream defaults to 10000.
+      - HERMES_UID=${HERMES_UID:-1000}
+      - HERMES_GID=${HERMES_GID:-1000}
+      # API server stays OFF. Enabling it needs BOTH lines, and API_SERVER_KEY
+      # is mandatory for auth. Keep it behind an authenticating reverse proxy,
+      # never on raw 0.0.0.0.
+      # - API_SERVER_HOST=0.0.0.0
+      # - API_SERVER_KEY=${API_SERVER_KEY}
+    command: ["gateway", "run"]
+
+  # Bring this up only AFTER the gateway logs verify clean: the resolved
+  # provider/base_url, and a context limit at or above 64000 tokens.
+  # It stores provider API keys and has NO built-in auth, hence 127.0.0.1 only.
+  # Never pass `--insecure --host 0.0.0.0`; tunnel instead:
+  #   ssh -L 9119:localhost:9119 <docker-host>
+  #
+  # dashboard:
+  #   image: hermes-agent          # built by `gateway`; no build stanza here
+  #   container_name: hermes-dashboard
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   depends_on:
+  #     - gateway
+  #   volumes:
+  #     - /opt/hermes:/opt/data
+  #   environment:
+  #     - HERMES_UID=${HERMES_UID:-1000}
+  #     - HERMES_GID=${HERMES_GID:-1000}
+  #   command: ["dashboard", "--host", "127.0.0.1", "--no-open"]

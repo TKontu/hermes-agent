@@ -12,7 +12,8 @@
 #
 # Deltas from upstream:
 #   1. volume  ~/.hermes -> /opt/hermes   (Portainer runs as root; `~` won't resolve)
-#   2. UID/GID default 10000 -> 1000      (match the host owner of /opt/hermes)
+#   2. UID/GID default 10000 -> 1001      (the dedicated `hermes` service
+#      account, NOT the admin user at uid 1000)
 #   3. network_mode: host kept            (reach llama-swap on the LAN without NAT)
 #   4. dashboard commented out for first run
 #
@@ -41,10 +42,13 @@ services:
       # disposable.
       - /opt/hermes:/opt/data
     environment:
-      # Must match the uid:gid owning /opt/hermes, or the container writes files
-      # the host user cannot read back. Upstream defaults to 10000.
-      - HERMES_UID=${HERMES_UID:-1000}
-      - HERMES_GID=${HERMES_GID:-1000}
+      # s6-overlay remaps the container's internal `hermes` user to these and
+      # drops to it, so this decides who the agent RUNS AS and who owns
+      # everything under /opt/hermes. 1001 is the dedicated unprivileged
+      # service account -- deliberately not 1000, which on a default Ubuntu
+      # install is the sudo-capable admin user. Upstream defaults to 10000.
+      - HERMES_UID=${HERMES_UID:-1001}
+      - HERMES_GID=${HERMES_GID:-1001}
       # API server stays OFF. Enabling it needs BOTH lines, and API_SERVER_KEY
       # is mandatory for auth. Keep it behind an authenticating reverse proxy,
       # never on raw 0.0.0.0.
@@ -68,6 +72,6 @@ services:
   #   volumes:
   #     - /opt/hermes:/opt/data
   #   environment:
-  #     - HERMES_UID=${HERMES_UID:-1000}
-  #     - HERMES_GID=${HERMES_GID:-1000}
+  #     - HERMES_UID=${HERMES_UID:-1001}
+  #     - HERMES_GID=${HERMES_GID:-1001}
   #   command: ["dashboard", "--host", "127.0.0.1", "--no-open"]

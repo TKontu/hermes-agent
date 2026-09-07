@@ -50,19 +50,18 @@ services:
       # resolve to your user. All durable state lives here; the container is
       # disposable.
       - /opt/hermes:/opt/data
-      # NAS-backed Obsidian vault, split in two so the boundary is enforced by
-      # mount options rather than by convention. The agent has no SMB credential
-      # (root-owned 600 at /etc/hermes-smb.creds on the VM, outside these mounts)
-      # and cannot remount, so these options are the boundary.
+      # NAS-backed Obsidian vault, as two separate TrueNAS datasets/shares so the
+      # boundary is enforced by the NAS itself, not merely by these mount flags.
+      # The agent holds no SMB credential (root-owned 600 at /etc/hermes-smb.creds
+      # on the VM, outside both mounts) and cannot remount.
       #
-      #   vault  READ-ONLY  -- the human's notes. An injected agent must not be
-      #                        able to write something you later read in Obsidian
-      #                        as if you had written it.
-      #   share  READ-WRITE -- the agent's drop: notes and artefacts it produces.
-      #                        It is vault/from-hermes on the NAS, so Obsidian
-      #                        sees it as a normal folder inside the vault, and
-      #                        anything the agent wrote is identifiable at a
-      #                        glance. See docs/todo-notes.md.
+      #   vault  //192.168.0.136/hermes       READ-ONLY  -- the human's notes.
+      #          hermes-agent has Read|Execute at the NAS, so even a leaked
+      #          credential cannot rewrite them.
+      #   share  //192.168.0.136/hermes-edit  READ-WRITE -- the agent's drop for
+      #          notes and artefacts. A nested dataset, so Obsidian sees it as a
+      #          normal folder inside the vault and anything the agent wrote is
+      #          identifiable at a glance. See docs/todo-notes.md.
       - /mnt/hermes-vault:/opt/data/vault:ro
       - /mnt/hermes-out:/opt/data/share
     environment:

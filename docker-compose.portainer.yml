@@ -50,20 +50,22 @@ services:
       # resolve to your user. All durable state lives here; the container is
       # disposable.
       - /opt/hermes:/opt/data
-      # NAS-backed Obsidian vault, as two separate TrueNAS datasets/shares so the
-      # boundary is enforced by the NAS itself, not merely by these mount flags.
-      # The agent holds no SMB credential (root-owned 600 at /etc/hermes-smb.creds
-      # on the VM, outside both mounts) and cannot remount.
+      # NAS-backed Obsidian vault, as ONE path with a writable hole in it.
       #
-      #   vault  //192.168.0.136/hermes       READ-ONLY  -- the human's notes.
-      #          hermes-agent has Read|Execute at the NAS, so even a leaked
-      #          credential cannot rewrite them.
-      #   share  //192.168.0.136/hermes-edit  READ-WRITE -- the agent's drop for
-      #          notes and artefacts. A nested dataset, so Obsidian sees it as a
-      #          normal folder inside the vault and anything the agent wrote is
-      #          identifiable at a glance. See docs/todo-notes.md.
+      # Two TrueNAS datasets: `hermes` (the vault) and the nested `hermes-edit`.
+      # The nested dataset is visible through the parent share, so mounting the
+      # writable one OVER the read-only subdirectory gives a single vault path
+      # where everything is read-only except hermes-edit/. The obsidian skill
+      # then works unmodified against OBSIDIAN_VAULT_PATH=/opt/data/vault, and
+      # the agent has no second path to learn.
+      #
+      # Enforcement is at the NAS, not these flags: hermes-agent has
+      # Read|Execute on `hermes` and full rights on `hermes-edit`, so even a
+      # leaked credential cannot rewrite the human's notes. The agent holds no
+      # credential anyway -- it is root-owned 600 at /etc/hermes-smb.creds on the
+      # VM, outside both mounts. See docs/todo-notes.md.
       - /mnt/hermes-vault:/opt/data/vault:ro
-      - /mnt/hermes-out:/opt/data/share
+      - /mnt/hermes-out:/opt/data/vault/hermes-edit
     environment:
       # s6-overlay remaps the container's internal `hermes` user to these and
       # drops to it, so this decides who the agent RUNS AS and who owns

@@ -50,6 +50,13 @@ services:
       # resolve to your user. All durable state lives here; the container is
       # disposable.
       - /opt/hermes:/opt/data
+      # NAS-backed shared dataset (Obsidian vault etc). Mounted on the HOST from
+      # //192.168.0.136/hermes with a root-owned 600 credentials file at
+      # /etc/hermes-smb.creds -- deliberately outside this bind mount, so the SMB
+      # password is never in the agent's filesystem. Read-only: notes are the
+      # persistence sink, and an injected agent must not be able to write into a
+      # vault a human reads in Obsidian. See docs/todo-notes.md.
+      - /mnt/hermes-share:/opt/data/share:ro
     environment:
       # s6-overlay remaps the container's internal `hermes` user to these and
       # drops to it, so this decides who the agent RUNS AS and who owns

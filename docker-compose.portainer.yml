@@ -65,7 +65,24 @@ services:
       # credential anyway -- it is root-owned 600 at /etc/hermes-smb.creds on the
       # VM, outside both mounts. See docs/todo-notes.md.
       - /mnt/hermes-vault:/opt/data/vault:ro
-      - /mnt/hermes-out:/opt/data/vault/hermes-edit
+      - /mnt/hermes-vault-agent:/opt/data/vault/agent
+      #
+      # inbox  READ-ONLY  -- things the human hands to the agent. Read-only so
+      #        the agent cannot alter or delete what it was given. Note this is
+      #        an untrusted-input surface like any other: a document dropped
+      #        here reaches the model, and being handed over by a human does not
+      #        make its contents trustworthy.
+      # outbox READ-WRITE -- what the agent produces. Its nested `canvas/`
+      #        arrives with it, and is the only part the kiosk can see (the
+      #        kiosk mounts hermes-outbox-canvas with its own read-only
+      #        credential, so it cannot reach the rest of the outbox).
+      #
+      # There is deliberately NO mount for hermes-audit. That absence is the
+      # control: the audit trail records what the agent curates about itself, so
+      # it must sit where the agent cannot reach it. Adding it here would end
+      # the audit while looking like a convenience. See docs/todo-audit.md.
+      - /mnt/hermes-inbox:/opt/data/inbox:ro
+      - /mnt/hermes-outbox:/opt/data/outbox
     environment:
       # s6-overlay remaps the container's internal `hermes` user to these and
       # drops to it, so this decides who the agent RUNS AS and who owns
